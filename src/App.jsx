@@ -1,10 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Calculator, Copy, Save, BookOpen, CheckCircle2, ArrowLeftRight, ScanLine, Loader2, AlertTriangle, Bolt, Edit2, Trash2, Check, X } from 'lucide-react';
 
-// שים לב: בסביבת התצוגה המקדימה (Canvas), השארנו את מפתח ה-API ריק (המערכת מזריקה אותו אוטומטית).
-// **חשוב: כשאתה מריץ את הקוד אצלך במחשב או בגיטהאב, מחק את השורה של apiKey = "" והורד את סימון ההערה (//) מהשורה הבאה:**
-// const apiKey = import.meta.env.VITE_GEMINI_API_KEY; 
-const apiKey = ""; 
+
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY; 
 
 // --- Exact Historical Data from Provided CSV files ---
 const historicalData = [
@@ -53,8 +51,8 @@ const predictNextPeriod = (prevDateStr) => {
 
 // --- AI Parsing Logic Improved ---
 const analyzeBillWithAI = async (imagesDataList) => {
-  // Use flash model for image analysis
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+  // השימוש במודל שנתמך בסביבת התצוגה המקדימה
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
   
   const prompt = `
     You are an expert at extracting data from Israeli Electricity bills (חברת חשמל).
@@ -83,32 +81,41 @@ const analyzeBillWithAI = async (imagesDataList) => {
 
   const payload = {
     contents: [{ role: "user", parts: [{ text: prompt }, ...imageParts] }],
-    // Force the model to return JSON structure to prevent parsing crashes
+    // כפיית JSON כדי למנוע שגיאות בפענוח
     generationConfig: {
       responseMimeType: "application/json"
     }
   };
 
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    
-    if (!response.ok) {
-       throw new Error(`API returned status ${response.status}`);
+  // מנגנון ניסיונות חוזרים (Exponential Backoff) להתמודדות עם ניתוקים או עומס
+  const delays = [1000, 2000, 4000, 8000, 16000];
+  for (let i = 0; i < delays.length; i++) {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      
+      if (!response.ok) {
+         const errText = await response.text();
+         throw new Error(`API returned status ${response.status}: ${errText}`);
+      }
+      
+      const result = await response.json();
+      let text = result.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+      
+      // ניקוי סימני Markdown במידה והמודל התעלם מהבקשה
+      text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+      return JSON.parse(text);
+    } catch (error) {
+      if (i === delays.length - 1) {
+        console.error("AI Parsing error:", error);
+        throw error;
+      }
     }
-    
-    const result = await response.json();
-    let text = result.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-    
-    // Safety cleanup in case of markdown
-    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
-    return JSON.parse(text);
-  } catch (error) {
-    console.error("AI Parsing error:", error);
-    throw error;
+    // השהיה לפני ניסיון חוזר
+    await new Promise(r => setTimeout(r, delays[i]));
   }
 };
 
@@ -267,7 +274,7 @@ function App() {
       }
     } catch (e) { 
         console.error(e);
-        showAlert("שגיאה", "❌ נכשל בפענוח החשבונית. ייתכן והתמונה אינה ברורה מספיק, נסה שוב."); 
+        showAlert("שגיאה", "❌ נכשל בפענוח החשבונית. ייתכן והתמונה אינה ברורה מספיק או שרת ה-AI עמוס, נסו שוב."); 
     }
     finally { setIsAnalyzing(false); }
   };
