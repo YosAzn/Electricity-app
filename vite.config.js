@@ -1,10 +1,13 @@
 import { defineConfig } from 'vite'
+
 import react from '@vitejs/plugin-react'
 
-// https://vitejs.dev/config/
+
+
 export default defineConfig({
+
+  base: '/Electricity-app/', // <--- השורה שצריך להוסיף (עם הלוכסנים)
+
   plugins: [react()],
-  build: {
-    target: 'es2020' // הגרסה המודרנית שמאפשרת קריאת משתני סביבה
-  }
+
 })
