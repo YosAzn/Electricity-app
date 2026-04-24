@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Calculator, Copy, Save, BookOpen, CheckCircle2, ArrowLeftRight, ScanLine, Loader2, AlertTriangle, Bolt, Edit2, Trash2, Check, X } from 'lucide-react';
 
-
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY; 
+// שים לב: בסביבת התצוגה המקדימה (Canvas), השארנו את מפתח ה-API ריק (המערכת מזריקה אותו אוטומטית).
+// **חשוב: כשאתה מריץ את הקוד אצלך במחשב או בגיטהאב, מחק את השורה של apiKey = "" והורד את סימון ההערה (//) מהשורה הבאה:**
+// const apiKey = import.meta.env.VITE_GEMINI_API_KEY; 
+const apiKey = ""; 
 
 // --- Exact Historical Data from Provided CSV files ---
 const historicalData = [
@@ -49,32 +51,65 @@ const predictNextPeriod = (prevDateStr) => {
   return `${nextMonthStr} ${year}`;
 };
 
+// --- AI Parsing Logic Improved ---
 const analyzeBillWithAI = async (imagesDataList) => {
+  // Use flash model for image analysis
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+  
   const prompt = `
-    Analyze the Israeli electricity bill images. Return ONLY a raw JSON object. 
-    1. 'reading': Extract handwritten ink number on page 1.
-    2. 'vat': Extract VAT percentage (e.g. 18).
-    3. 'period': Extract Hebrew months (e.g. "ינו'-פבר'"). 
-    4. 'hasTariffChange': true if multiple rows in consumption table.
-    5. 'parentsUsage1': "צריכה בקוט"ש" column, row 1 (the 498 value).
-    6. 'tariff1': "מחיר לקוט"ש" column, row 1.
-    7. 'parentsUsage2': "צריכה בקוט"ש" column, row 2 (the 1433 value).
-    8. 'tariff2': "מחיר לקוט"ש" column, row 2.
-    Format: {"reading": "", "vat": "", "period": "", "hasTariffChange": true, "parentsUsage1": "", "tariff1": "", "parentsUsage2": "", "tariff2": ""}
+    You are an expert at extracting data from Israeli Electricity bills (חברת חשמל).
+    Analyze the provided bill images and extract the exact details requested.
+    Return ONLY a valid JSON object.
+    
+    Fields to extract:
+    1. "reading": Look for a handwritten number (often in pen) indicating the current meter reading on the first page. If none, return empty string "".
+    2. "vat": The VAT percentage (מע"מ) used in the bill (e.g., 17 or 18).
+    3. "period": The billing period (תקופת החשבון). Format as Hebrew short months (e.g. "ינו'-פבר'", "מרץ-אפר'", "מאי-יוני", "יולי-אוג'", "ספט'-אוק'", "נוב'-דצמ'").
+    4. "hasTariffChange": Boolean true/false. Look at the consumption breakdown table. Is the consumption split into TWO lines with TWO DIFFERENT prices?
+    5. "tariff1": The OLD / FIRST price per kWh in Agorot (מחיר לקוט"ש). If no change, put the regular tariff here.
+    6. "parentsUsage1": The total kWh consumed under tariff1 (צריכה בקוט"ש).
+    7. "tariff2": The NEW / SECOND price per kWh in Agorot (only if hasTariffChange is true).
+    8. "parentsUsage2": The total kWh consumed under tariff2 (only if hasTariffChange is true).
+    
+    Important: If there is no tariff change, set hasTariffChange to false, put the single tariff in tariff1, and leave tariff2, parentsUsage1, parentsUsage2 empty.
+    
+    Example Output:
+    {"reading": "85925", "vat": "17", "period": "ספט'-אוק'", "hasTariffChange": true, "parentsUsage1": "498", "tariff1": "54.25", "parentsUsage2": "1433", "tariff2": "52.52"}
   `;
+
   const imageParts = imagesDataList.map(img => ({ 
     inlineData: { mimeType: img.mimeType, data: img.data.split(',')[1] } 
   }));
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }, ...imageParts] }] })
-  });
-  const result = await response.json();
-  let text = result.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-  text = text.replace(/```json/g, '').replace(/```/g, '').trim();
-  return JSON.parse(text);
+
+  const payload = {
+    contents: [{ role: "user", parts: [{ text: prompt }, ...imageParts] }],
+    // Force the model to return JSON structure to prevent parsing crashes
+    generationConfig: {
+      responseMimeType: "application/json"
+    }
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    
+    if (!response.ok) {
+       throw new Error(`API returned status ${response.status}`);
+    }
+    
+    const result = await response.json();
+    let text = result.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+    
+    // Safety cleanup in case of markdown
+    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(text);
+  } catch (error) {
+    console.error("AI Parsing error:", error);
+    throw error;
+  }
 };
 
 const InputField = ({ label, value, onChange, type = "text", suffix = "", placeholder="0" }) => (
@@ -232,7 +267,7 @@ function App() {
       }
     } catch (e) { 
         console.error(e);
-        showAlert("שגיאה", "❌ נכשל בפענוח החשבונית. נא לוודא שיש מפתח API מוגדר ושהתמונה ברורה."); 
+        showAlert("שגיאה", "❌ נכשל בפענוח החשבונית. ייתכן והתמונה אינה ברורה מספיק, נסה שוב."); 
     }
     finally { setIsAnalyzing(false); }
   };
