@@ -3,6 +3,7 @@ import { Calculator, Copy, Save, BookOpen, ScanLine, Loader2, Bolt, Trash2, Came
 
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY; 
 
+
 // --- Exact Historical Data ---
 const historicalData = [
   // 2025 Data (Full Year)
